@@ -1,0 +1,422 @@
+---
+title: "Lab4 - Spatial Transcriptomics"
+author: "JoeyB"
+date: "9 november 2018"
+output:
+  BiocStyle::html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Lab3 - Spatial Transcriptomics
+
+## Intro
+
+In this lab we will look at Spatial Transcriptomics (ST) data.
+
+The data set that we will work with is a real example of a Breast Cancer tissue biopsy. By utilizing the histology image together with RNAseq data, we can detect spatial patterns of expression otherwise hard to obtain. This is the tissue section we will work with:
+
+![Spatial Transcriptomics H&E image](he_image.jpg)
+
+As you are no pathologists (I sure not am!), the image by itself might not tell you much, but looking at this one, it's fairly easy to see where the tumors are. Traditionally, if one where to use "bulk" (i.e. take RNA from the whole tissue section) RNAseq, there would be no distinction of different tumor areas, as they would be counted as a single tumor. 
+
+`Q1 - Why could it be interesting to be able to distinguish RNAseq data from different isolated tumor areas of this tissue section?`
+
+## Load the data
+
+As we have done in Lab1 and Lab2, we will once again read in the data and create a summarizedExperiment object. (Download the count data and the tissue image from Canvas). Do this now!
+
+```{r}
+
+data <- read.table("data_lab4/counts.tsv", check.names = FALSE)
+
+```
+
+
+Lets look at our column-names here. In previous labs, columns represent "samples" or "cells". Here, they represent a spatial "spot", i.e. a circular area on the array where the RNA were captured. Look at some of the column names. You will notice that they are in the form of coordinates ([x-coordinate]x[y-coordinate]), representing the position on the ST array. This information can be used to plot the data in R.
+
+## Create the SingleCellExperiment
+
+ST data is quite "unique" in its nature. It's not single cells (one spatial "spot" contains 10 cells on average), but the characteristics of the data do in many ways display similarity to that seen in single cell assays. Hence, many of the methods we use to deal with ST data at our lab are methods originally developed with singe cell data in mind.
+
+Lets create a SingeCellExperiment object to handle our data. 
+
+```{r}
+
+#FACIT
+
+library(SingleCellExperiment)
+sce <- SingleCellExperiment(assays=list(counts=as.matrix(data)))
+
+
+```
+
+
+## Filter out low abundance genes. 
+
+There are quite a lot of genes here with very low count values across the tissue. These will be both hard to analyze (risk for dropout-events) as well as increase our computational time. So lets filter them out. Set a threshold for 10 gene-counts across all spots *and* 500 total counts as minimum value for each spot. 
+
+
+```{r}
+
+#Facit
+before <- dim(sce)
+sce <- sce[rowSums(assays(sce)$counts) > 10, colSums(assays(sce)$counts) > 500]
+after <- dim(sce)
+
+print(paste("Number of genes and spots lost:"))
+print(before - after)
+
+
+```
+
+
+`Q2 - How many spots and genes did you loose during filtering?`
+
+
+## Normalize the data?
+
+Lets use the same simple normalization approach as in lab2 (`scater::normalize`). The saved normalized values are stored in the sce object as assays(sce)$logcounts
+
+```{r}
+
+#FACIT
+library(scater)
+
+sce <- normalize(sce)
+
+
+```
+
+## Plot the data
+
+As you noted, the spatial coordinates are saved in the column names of the count file. These can be extracted and used as coordinates for our plots. I've provided some code below to extract this information. You can use my code or try it yourself, it's not really needed to understand this code if you don't want to ;)
+
+Basically, I extract the x and y coordinates and create a data frame with them that I use for plotting:
+
+
+```{r}
+
+spotNames <- colnames(sce)
+spotNames <- sapply(strsplit(spotNames, "_"), "[[", 1)
+xcoord = as.numeric(sapply(strsplit(spotNames, "x"), "[[", 1))
+ycoord = as.numeric(sapply(strsplit(spotNames, "x"), "[[", 2))
+coord_df = as.data.frame(cbind(x=xcoord, y=ycoord))
+
+plot(x=xcoord, y=ycoord, col="black", lwd=5, asp=1,
+             ylab="", xlab="", main=paste("Tissue plot"), pch=7, cex.main=3, 
+             xaxt="n", yaxt="n", bty="n", col.main="black")
+
+```
+
+Do you recognize the plot? Notice all the "extra" things I add to the plot function, that is just to remove axis, labels etc.
+
+`Q3 - Why are there holes inside the plotting area?`
+
+
+### Color a specific gene 
+
+Lets explore what we can actually do with the fact that we have spatial information along our gene expression data.
+
+Begin by finding the most variable gene in your data that we have > 500 total counts for (hint: use `var()` and apply it to all rows)
+
+```{r}
+
+#FACIT
+var_genes <- apply(assays(sce[rowSums(assays(sce)$counts) > 500, ])$logcounts, 1, var)
+
+head(sort(var_genes, decreasing = TRUE))
+
+
+```
+
+### Plot the gene and color it by the normalized counts
+
+In order to make a color gradient, we can use the function `colorRampPalette` and set the color range between two colors (low and high). First, extract the normalized count values from your most variable gene and save that to a vector.
+
+```{r}
+
+#FACIT
+gene <- names(head(sort(var_genes, decreasing = TRUE))[1])
+col <- as.vector(assays(sce[gene, ])$logcounts)
+
+
+```
+
+Then, we will use this vector to create our color gradient (I've given you the code below):
+
+
+```{r}
+
+rbPal <- colorRampPalette(c('yellow','red'))
+color_vector <- rbPal(10)[as.numeric(cut(col,breaks = 10))]
+
+
+```
+
+Now, we can do the same plot as before, but instead color the points with the color vector!
+Also, but the name of the gene as the main title of the plot !
+(Hint: you can use the plot code above and change the color part and the title part)
+
+```{r}
+
+plot(x=xcoord, y=-ycoord, col=color_vector, lwd=5, asp=1,
+             ylab="", xlab="", main=paste(gene), pch=7, cex.main=3, 
+             xaxt="n", yaxt="n", bty="n", col.main="black")
+
+
+
+```
+
+### Plot the data with the tissue image below
+
+One of the main features with ST data is that you can overlay your data on top of the tissue image, in order to visualize the spatial location of the data points. Below I give you a function for such a plot. Load in the function in R (i.e. just copy and run the code), and run the function with your data and your image file (downloaded from canvas and loaded into R (see next chunk)). OBS: you might need to install the `ggplot2` library before (and load it)
+
+
+```{r}
+#This is the code to load the image.
+#OBS! You need the "jpeg" package, install if you do not have that!
+
+tissue <- jpeg::readJPEG("data_lab4/he_image.jpg")
+tissue_grob <- grid::rasterGrob(tissue,
+                                    width = unit(1, "npc"),
+                                    height = unit(1, "npc"),
+                                    interpolate = TRUE
+                                )
+
+```
+
+The plot function:
+
+```{r}
+
+arrayPlot <- function(coordinates, image = NULL) {
+  
+    xmin=1
+    xmax=33
+    ymin=1
+    ymax=35
+
+    annotation <- ggplot2::annotation_custom(image, -Inf, Inf, -Inf, Inf)
+
+    coordinates$y <- ymax - coordinates$y + ymin
+
+    ggplot(data=coordinates, aes(x=x, y=y)) +
+       annotation +
+        geom_point(col="black",
+            alpha = 0.5, size=8
+        ) +
+        coord_fixed() +
+        scale_x_continuous(expand = c(0, 0), limits = c(xmin, xmax)) +
+        scale_y_continuous(expand = c(0, 0), limits = c(ymin, ymax)) +
+        theme_bw() +
+        theme(
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            axis.ticks = element_blank()
+        )
+}
+
+```
+
+Now you can use the function that you just "created":
+
+``` {r, fig.height=12, fig.width=12}
+
+arrayPlot(coord_df, image=tissue_grob)
+
+```
+
+Color the same gene as before above the tissue! (Using the new function, try to figure out where to put the color vector)
+
+```{r}
+
+#FACIT
+
+arrayPlot <- function(coordinates, image = NULL) {
+  
+    xmin=1
+    xmax=33
+    ymin=1
+    ymax=35
+
+    annotation <- ggplot2::annotation_custom(image, -Inf, Inf, -Inf, Inf)
+
+    coordinates$y <- ymax - coordinates$y + ymin
+
+    ggplot(data=coordinates, aes(x=x, y=y)) +
+       annotation +
+        geom_point(col=color_vector,
+            alpha = 0.5, size=8
+        ) +
+        coord_fixed() +
+        scale_x_continuous(expand = c(0, 0), limits = c(xmin, xmax)) +
+        scale_y_continuous(expand = c(0, 0), limits = c(ymin, ymax)) +
+        theme_bw() +
+        theme(
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            axis.ticks = element_blank()
+        )
+}
+
+
+
+```
+
+```{r, fig.height=12, fig.width=12}
+
+#FACIT
+
+#Red = High counts
+
+arrayPlot(coord_df, image=tissue_grob)
+
+```
+
+
+`Q4 - Explain what you see in the plot?`
+
+
+## Cluster the data
+
+Lets cluster our spatial areas with kMeans and visualize it on the array. 
+
+```{r}
+
+set.seed(101)
+
+#FACIT
+
+km <- kmeans(t(assays(sce)$logcounts), iter.max=10, nstart=10, centers=5)
+
+```
+
+Remember that clusters are stored in the output of kmeans (e.g. km <- kmeans()) and accessed by km$cluster.
+If you want to create a color palette out of this create a color vector via `palette()[km$cluster].
+After running this, you might as well save the color information to the sce object, e.g:
+
+```{r}
+colData(sce)$cluster <- palette()[km$cluster]
+```
+
+
+```{r, fig.height=12, fig.width=12}
+
+#FACIT
+
+arrayPlot <- function(coordinates, image = NULL) {
+  
+    xmin=1
+    xmax=33
+    ymin=1
+    ymax=35
+
+    annotation <- ggplot2::annotation_custom(image, -Inf, Inf, -Inf, Inf)
+
+    coordinates$y <- ymax - coordinates$y + ymin
+
+    ggplot(data=coordinates, aes(x=x, y=y)) +
+       annotation +
+        geom_point(col=palette()[km$cluster],
+            alpha = 0.3, size=8
+        ) +
+        coord_fixed() +
+        scale_x_continuous(expand = c(0, 0), limits = c(xmin, xmax)) +
+        scale_y_continuous(expand = c(0, 0), limits = c(ymin, ymax)) +
+        theme_bw() +
+        theme(
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            axis.ticks = element_blank()
+        )
+}
+
+
+arrayPlot(coord_df, image=tissue_grob)
+```
+
+`Q5 - Does the clusters make sense? Try to explain and "annotate" the clusters`
+
+
+
+## Difference in genes among regions
+
+
+Lets conduct a differential gene expression analysis between the green and the blue area.
+To do this, we will use a library called `DESeq2`.
+You can follow the workflow [here](http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html)
+But this is a bit out of the scope for this lab, so I will just provide you the code. 
+The thing you need to do first is install the needed libraries. 
+
+OBS! To run the code below you need to first subset the sce object (extract only the green and blue clusters). We do this because we want to save computational time.
+Also, if your clusters are saved as something else than these color names, change the code accordingly.
+Below, I've called the subsetted sce object "sce_sub"
+
+```{r}
+
+sce_sub <- sce[, colData(sce)$cluster %in% c("green3", "blue")]
+
+```
+
+```{r}
+library(scran)
+library(DESeq2)
+
+#Create a DESeq2 dataset out of our subsetted SingleCellExperiment object
+dds <- convertTo(sce_sub, type="DESeq2")
+colData(dds)$cluster <- as.factor(colData(sce_sub)$cluster)
+
+#We want to comare the different clusters
+design(dds) <- formula(~ 1 + cluster)
+
+#Run DESeq2
+dds <- DESeq(dds)
+
+#Create results table
+res <- results(dds)
+
+#Plot Ma plot
+plotMA(res, ylim=c(-2,2))
+
+```
+
+
+`Q6 - Try to explain the plot`
+
+### Extract the 5 top upregulated genes in the blue and green cluster respectively
+
+The whole result table is stored in the res object. Sort this table by "padj" (adjusted-pvalue), to find the most significant up and down-regulated genes.
+
+`Q7 - top5 upregulated genes in the blue cluster comparted to the green`
+
+```{r}
+
+#FACIT
+
+res_greenUp <- res[which(res$log2FoldChange > 0), ]
+res_greenUp <- res_greenUp[order(res_greenUp$padj), ]
+top5greenUp <- rownames(res_greenUp[1:5, ])
+top5greenUp
+
+```
+
+
+`Q8 - top5 upregulated genes in the green cluster comparted to the blue`
+
+```{r}
+
+#FACIT
+
+res_blueUp <- res[which(res$log2FoldChange < 0), ]
+res_blueUp <- res_blueUp[order(res_blueUp$padj), ]
+top5blueUp <- rownames(res_blueUp[1:5, ])
+top5blueUp
+
+
+```
+
+
+
